@@ -1,0 +1,7 @@
+name: Tethered
+version: '1.0-SNAPSHOT'
+main: me.lukiiy.tethered.Tethered
+api-version: '1.21'
+load: STARTUP
+authors: [ Lukiiy ]
+description: everyone is tethered together
