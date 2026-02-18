@@ -42,27 +42,39 @@ class Tethered : JavaPlugin(), Listener {
     }
 
     // Stuff
-    private val tickTask: Consumer<ScheduledTask> = Consumer { task ->
-        val players = server.onlinePlayers.filter { isValidPlayer(it) }
-        if (players.isEmpty()) return@Consumer
+    private val tickTask: Consumer<ScheduledTask> = Consumer { _ ->
+        val available = server.onlinePlayers.filter { isValidPlayer(it) }.toMutableList()
+        val paired = mutableSetOf<Player>()
 
-        for (player in players) {
-            val others = getNearestPlayer(player)?.let { listOf(it) } ?: continue
-            val group = listOf(player) + others
+        for (player in available) {
+            if (player in paired) continue
 
-            val center = group.map { it.location.toVector() }.reduce { acc, vec -> acc.add(vec) }.multiply(1.0 / group.size)
+            val other = getNearestPlayer(player, paired) ?: continue
+
+            paired += player
+            paired += other
+
+            val group = listOf(player, other)
+            val center = group.map { it.location.toVector() }
+                .reduce { acc, v -> acc.add(v) }
+                .multiply(.5)
 
             for (p in group) {
                 val pVec = p.location.toVector()
                 val dist = pVec.distance(center)
                 if (dist <= dragDist) continue
 
-                var speed = .5 * ((dist - dragDist) / dragDist).coerceIn(0.75, 2.0)
+                val speed = ((dist - dragDist) / dragDist).coerceIn(.5, 2.0) / 2
 
                 if (p.isInsideVehicle) p.leaveVehicle()
+                if (p.isSleeping) p.damage(0.1)
 
-                p.velocity = center.clone().subtract(pVec).normalize().multiply(speed).apply { y += if (p.location.y < player.location.y) 0.1 else 0.0 }
-                if (p.world.fullTime % 2L == 0L) rayParticle(p.location.add(0.0, p.boundingBox.height / 2, 0.0), player.location.add(0.0, player.boundingBox.height / 2, 0.0))
+                val dir = center.clone().subtract(pVec).normalize().multiply(speed)
+
+                if (p.location.y < center.y) dir.y += 0.1
+
+                p.velocity = dir
+                rayParticle(p.location.add(0.0, p.boundingBox.height / 2, 0.0), center.toLocation(p.world).add(.0, .5, .0))
             }
         }
     }
@@ -70,7 +82,7 @@ class Tethered : JavaPlugin(), Listener {
     fun rayParticle(from: Location, to: Location) {
         val rayDir = to.toVector().subtract(from.toVector())
         val stepVec = rayDir.clone().normalize().multiply(.5)
-        val steps = (rayDir.length() * 3.0).toInt().coerceAtMost(25)
+        val steps = (rayDir.length() * 2.0).toInt().coerceAtMost(25)
 
         var point = from.toVector()
         repeat(steps) {
@@ -79,11 +91,7 @@ class Tethered : JavaPlugin(), Listener {
         }
     }
 
-    private fun getNearestPlayer(p: Player): Player? {
-        val pLoc = p.location
-
-        return p.world.players.asSequence().filter { it != p && isValidPlayer(it) }.minByOrNull { it.location.distanceSquared(pLoc) }
-    }
+    private fun getNearestPlayer(p: Player, exclude: Set<Player> = emptySet()): Player? = p.world.players.asSequence().filter { it != p && it !in exclude && isValidPlayer(it) }.minByOrNull { it.location.distanceSquared(p.location) }
 
     val isValidPlayer = { p: Player -> !p.gameMode.isInvulnerable && !p.isDead }
 
@@ -93,7 +101,10 @@ class Tethered : JavaPlugin(), Listener {
         if (p.gameMode.isInvulnerable) return
 
         e.player.scheduler.run(this, {
-            getNearestPlayer(p)?.damage(999.0, e.damageSource)
+            getNearestPlayer(p)?.apply {
+                damage(.1, e.damageSource)
+                health = .0
+            }
         }, null)
     }
 
